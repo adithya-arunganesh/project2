@@ -46,7 +46,7 @@ class_diag <- function(score, truth, positive, cutoff=.5){
 
 # Mining, Classification, Prediction
 
-## Name and EID here
+## Adithya Arunganesh aa86362
 
 ### Introduction 
 
@@ -54,84 +54,190 @@ Paragraph or two introducing your datasets and variables, why they are interesti
 
 ```{R}
 library(tidyverse)
-# read your datasets in here, e.g., with read_csv()
+credit_card <- read_csv("CreditCard.csv")
 
-# if your dataset needs tidying, do so here
-
-# any other code here
+credit_card %>% summarize(n=n())
+credit_card %>% group_by(card) %>% summarize(n=n())
+credit_card %>% group_by(owner) %>% summarize(n=n())
+credit_card %>% group_by(selfemp) %>% summarize(n=n())
 ```
+*The dataset I chose was a dataset from the AER package which I found on this link (https://vincentarelbundock.github.io/Rdatasets/datasets.html). The reason I chose this dataset was because I thought it would be interesting to learn any correlation between general information of a person and whether their credit card application gets accepted since I recently applied for a credit card application and got accepted.*
+
+*The variables for this dataset are X1 (ID variable), card (whether credit card application was accepted or not), reports (the number of major derogatory reports), age (age of applicant in years plus twelfths of a year), income (yearly income in 10000 USD), share (ratio of monthly credit card expenditure to yearly income), expenditure (average monthly credit card expenditure), owner (whether the person is a homeowner or not), and selfemp (whether the person is self-employed or not)...there are more variables but these are the main ones. In total, there are 1319 observations. There are 1023 applications that were accepted and 296 that were not; there are 581 homeowners and 738 who are not; there are 91 people that are self-employed and 1228 that are not. *
+
 
 ### Cluster Analysis
 
 ```{R}
 library(cluster)
-# clustering code here
+credit_card_clust <- credit_card %>% select(age, income, share, expenditure)
+sil_width<-vector() #empty vector to hold mean sil width
+for(i in 2:10){  
+  kms <- kmeans(credit_card_clust,centers=i) #compute k-means solution for each k
+  sil <- silhouette(kms$cluster,dist(credit_card_clust)) #get sil widths
+  sil_width[i]<-mean(sil[,3]) #take averages (higher is better)
+}
+ggplot()+geom_line(aes(x=1:10,y=sil_width))+scale_x_continuous(name="k",breaks=1:10)
+pam1 <- credit_card_clust %>% pam(k=2)
+pam1$silinfo$avg.width
+pam1
+
+library(GGally)
+kms <- credit_card_clust %>% kmeans(2)
+credit_card_clust %>% mutate(cluster = as.factor(kms$cluster)) %>% ggpairs(cols= 1:4, aes(color=cluster))
 ```
 
-Discussion of clustering here
+*The first cluster (red) tends to have younger people, lower incomes, lower share values, and lower expenditures while the second cluster (blue) has older people, slightly higher incomes, higher share values, and higher expenditures. In terms of goodness-of-fit of the cluster solution, a reasonable structure has been found since the average silhouette width is 0.65 (between 0.50-0.71).*
     
     
 ### Dimensionality Reduction with PCA
 
 ```{R}
-# PCA code here
+pca1 <- princomp(credit_card_clust, cor=T)
+summary(pca1, loadings = T)
+pca1df<-data.frame(PC1=pca1$scores[, 1],PC2=pca1$scores[, 2])
+ggplot(pca1df, aes(PC1, PC2)) + geom_point()
 ```
 
-Discussions of PCA here. 
+*Most of the values from the plot tend to have higher PC1 values while the PC2 values seem to be all over the place but mostly concentrated around lower values. PC1 represents the general axis for income, share, and expenditure all of which have negative correlations. This means a higher PC1 will results in a lower income, share, and expenditure. PC2 represents age/income vs share (high ages and incomes means low share). This means a lower PC2 will result in lower ages, incomes but higher shares. PC1 and PC2 explain 80.78% of the variation.*
 
 ###  Linear Classifier
 
 ```{R}
-# linear classifier code here
+credit_card_lin <- credit_card %>% select(card, reports, age, income, share, expenditure, dependents, months, majorcards, active)
+logistic_fit <- glm(card == "yes" ~ reports + age + income + share + expenditure + dependents + months + majorcards + active, data=credit_card_lin, family="binomial")
+prob_reg <- predict(logistic_fit, type="response")
+class_diag(prob_reg, credit_card_lin$card, positive = "yes")
+
+predicted <- factor(prob_reg>.5,levels=c("TRUE","FALSE"))
+actual <- factor(credit_card_lin$card=="yes", levels=c("TRUE","FALSE"))
+table(actual, predicted) %>% addmargins
 ```
 
 ```{R}
-# cross-validation of linear classifier here
+k=10
+
+data<-sample_frac(credit_card_lin) #randomly order rows
+folds <- rep(1:k, length.out=nrow(data)) #create folds
+
+diags<-NULL
+
+i=1
+for(i in 1:k){
+# create training and test sets
+train<-data[folds!=i,] 
+test<-data[folds==i,] 
+truth<-test$card
+
+# train model
+fit <- glm(card == "yes" ~ reports + age + income + share + expenditure + dependents + months + majorcards + active, data=train, family="binomial") ### SPECIFY THE LOGISTIC REGRESSION MODEL FIT TO THE TRAINING SET HERE
+
+# test model
+probs <- predict(fit,newdata = test,type="response") ### GET PREDICTIONS FROM THE TRAINED MODEL ON THE TEST SET HERE
+
+# get performance metrics for each fold
+diags<-rbind(diags,class_diag(probs,truth, positive = "yes")) }
+
+#average performance metrics across all folds
+summarize_all(diags,mean)
 ```
 
-Discussion here
+*Per AUC, the model is correctly predicting whether the credit card application was accepted or not 73.69% of the time. Per CV AUC, the model is correctly predicting whether the credit card application was accepted or not 76.76% of the time. There seems to be slight overfitting since the AUC and CV AUC values are somewhat different but not by too much. *
 
 ### Non-Parametric Classifier
 
 ```{R}
 library(caret)
-# non-parametric classifier code here
+knn_fit <- knn3(card=="yes" ~ reports + age + income + share + expenditure + dependents + months + majorcards + active, data=credit_card_lin)
+prob_knn <- predict(knn_fit, credit_card_lin)[,2]
+class_diag(prob_knn, credit_card_lin$card, positive = "yes")
+
+
+predicted <- factor(prob_knn>.5,levels=c("TRUE","FALSE"))
+actual <- factor(credit_card_lin$card=="yes", levels=c("TRUE","FALSE"))
+table(actual, predicted) %>% addmargins
 ```
 
 ```{R}
-# cross-validation of np classifier here
+k=10
+
+data<-sample_frac(credit_card_lin) #randomly order rows
+folds <- rep(1:k, length.out=nrow(data)) #create folds
+
+diags<-NULL
+
+i=1
+for(i in 1:k){
+# create training and test sets
+train<-data[folds!=i,] 
+test<-data[folds==i,] 
+truth<-test$card
+
+# train model
+fit <- knn3(card=="yes" ~ reports + age + income + share + expenditure + dependents + months + majorcards + active, data=train) ### SPECIFY THE LOGISTIC REGRESSION MODEL FIT TO THE TRAINING SET HERE
+
+# test model
+probs <- predict(fit, test)[,2] ### GET PREDICTIONS FROM THE TRAINED MODEL ON THE TEST SET HERE
+
+# get performance metrics for each fold
+diags<-rbind(diags,class_diag(probs,truth, positive="yes")) }
+
+#average performance metrics across all folds
+summarize_all(diags,mean)
 ```
 
-Discussion
+*Per AUC, the model is correctly predicting whether the credit card application was accepted or not 99.56% of the time. Per CV AUC, the model is correctly predicting whether the credit card application was accepted or not 98.01% of the time. There seems to be no signs of overfitting since the CV AUC and the AUC value are not drastically different. The nonparametric model did a better job at predicting the card variable more accurately than the linear model in the cross-validation performance.*
 
 
 ### Regression/Numeric Prediction
 
 ```{R}
-# regression model code here
+fit<-lm(expenditure~.,data=credit_card)
+yhat<-predict(fit)
+mean((credit_card$expenditure-yhat)^2)
 ```
 
 ```{R}
-# cross-validation of regression model here
+k=5 #choose number of folds
+data<-credit_card[sample(nrow(credit_card)),] #randomly order rows
+folds<-cut(seq(1:nrow(credit_card)),breaks=k,labels=F) #create folds
+diags<-NULL
+for(i in 1:k){
+  train<-data[folds!=i,]
+  test<-data[folds==i,]
+  ## Fit linear regression model to training set
+  fit<-lm(expenditure~.,data=train)
+  ## Get predictions/y-hats on test set (fold i)
+  yhat<-predict(fit,newdata=test)
+  ## Compute prediction error  (MSE) for fold i
+  diags<-mean((test$expenditure-yhat)^2) 
+}
+mean(diags) ## get average MSE across all folds (much higher error)!
 ```
 
-Discussion
+*The MSE for the regression model is 13881.97. The average MSE across all of the folds are 26986.11. There are signs of overfitting since the MSE for the k-fold CV is much greater than it is for the regression model. *
 
 ### Python 
 
 ```{R}
 library(reticulate)
+use_python("/usr/bin/python3", required = F)
+ages <- credit_card$age
 ```
 
 ```{python}
-# python code here
+mean = sum(r.ages)/len(r.ages)
 ```
 
-Discussion
+```{R}
+library(reticulate)
+py$mean
+```
+*In R, ages is saved as a dataframe that contains the column of all of the observations of age in the credit card dataset. Then in Python, mean is initialized as the sum of ages (which is accesesed using "r.") divided by length of ages and then is printed back in R using "py$".*
 
 ### Concluding Remarks
 
-Include concluding remarks here, if any
+*Thank you for a great semester, I thoroughly enjoyed this class. Professor Woodward was phenomenal and Yiwei was also great as well. Have a happy holidays. *
 
 
 
